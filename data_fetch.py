@@ -1,3 +1,4 @@
+
 from typing import List
 import pandas as pd
 import numpy as np
@@ -18,7 +19,7 @@ def get_universe(api: BybitAPI, category: str, quote: str, top_n: int, mode: str
         df = df.sort_values("turnover24h", ascending=False).head(top_n)
         return df["symbol"].tolist()
 
-    # VOLATILITY: считаем std лог-ретурнов за vol_lookback свечей для каждого символа (дорого: N_kline запросов)
+    # VOLATILITY mode
     candidates = df.sort_values("turnover24h", ascending=False).head(int(top_n*1.5))["symbol"].tolist()
     vol_rows = []
     for sym in candidates:
@@ -32,9 +33,8 @@ def get_universe(api: BybitAPI, category: str, quote: str, top_n: int, mode: str
         ret = np.log(kdf["close"]).diff().dropna()
         std = float(ret.std())
         vol_rows.append((sym, std))
-    vol_rows.sort(key=lambda x: x[1], reverse=True)  # самые волатильные сверху
-    symbols = [s for s,_ in vol_rows[:top_n]]
-    return symbols
+    vol_rows.sort(key=lambda x: x[1], reverse=True)
+    return [s for s,_ in vol_rows[:top_n]]
 
 def get_ohlcv(api: BybitAPI, symbol: str, category: str, interval: str, limit: int) -> pd.DataFrame:
     resp = api.get_kline(category=category, symbol=symbol, interval=interval, limit=limit)

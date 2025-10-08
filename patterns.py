@@ -7,14 +7,29 @@ def _body_ratio(o, c, h, l):
     body = abs(c - o)
     return body / rng
 
+def _pick_last_segment(df: pd.DataFrame, use_last_candle: bool) -> pd.DataFrame:
+    if len(df) < 4:
+        return df.iloc[-3:]
+    return df.iloc[-3:] if use_last_candle else df.iloc[-4:-1]
+
 def detect_three_white_soldiers(df: pd.DataFrame,
                                 use_ema=True, use_rsi=True, use_macd=True, use_vol=True,
                                 min_body_ratio=0.6, max_upper_wick=0.35,
-                                rsi_min=50, rsi_max=72) -> Optional[Dict[str, Any]]:
+                                rsi_min=50, rsi_max=72,
+                                macd_tol: float = 0.0008,
+                                vol_min_ratio: float = 0.6,
+                                relax_mode: bool = True,
+                                use_last_candle: bool = True) -> Optional[Dict[str, Any]]:
     if len(df) < 60:
         return None
-    last = df.iloc[-3:]
-    # 3 бычьих крупных тела, минимум длинных верхних теней
+    if relax_mode:
+        min_body_ratio = min(min_body_ratio, 0.45)
+        max_upper_wick = max(max_upper_wick, 0.5)
+        rsi_min = min(rsi_min, 45)
+        rsi_max = max(rsi_max, 75)
+
+    last = _pick_last_segment(df, use_last_candle)
+
     for i in range(3):
         o, c, h, l = (last['open'].iloc[i], last['close'].iloc[i],
                       last['high'].iloc[i], last['low'].iloc[i])
@@ -25,6 +40,7 @@ def detect_three_white_soldiers(df: pd.DataFrame,
         uw = (h - max(o, c)) / max(h - l, 1e-12)
         if uw > max_upper_wick:
             return None
+
     if not (last['close'].iloc[1] > last['close'].iloc[0] and last['close'].iloc[2] > last['close'].iloc[1]):
         return None
 
@@ -38,12 +54,12 @@ def detect_three_white_soldiers(df: pd.DataFrame,
         return None
 
     macd_line, signal_line, hist = macd(df['close'])
-    if use_macd and not (hist.iloc[-1] > 0):
+    if use_macd and not (hist.iloc[-1] > -macd_tol):
         return None
 
     if use_vol and 'volume' in df.columns:
         v = df['volume'].iloc[-20:]
-        if v.mean() <= 0 or v.iloc[-1] < 0.75 * v.mean():
+        if v.mean() <= 0 or v.iloc[-1] < vol_min_ratio * v.mean():
             return None
 
     atr14 = atr(df, 14).iloc[-1]
@@ -69,10 +85,21 @@ def detect_three_white_soldiers(df: pd.DataFrame,
 def detect_three_black_crows(df: pd.DataFrame,
                              use_ema=True, use_rsi=True, use_macd=True, use_vol=True,
                              min_body_ratio=0.6, max_lower_wick=0.35,
-                             rsi_min=28, rsi_max=50) -> Optional[Dict[str, Any]]:
+                             rsi_min=28, rsi_max=50,
+                             macd_tol: float = 0.0008,
+                             vol_min_ratio: float = 0.6,
+                             relax_mode: bool = True,
+                             use_last_candle: bool = True) -> Optional[Dict[str, Any]]:
     if len(df) < 60:
         return None
-    last = df.iloc[-3:]
+    if relax_mode:
+        min_body_ratio = min(min_body_ratio, 0.45)
+        max_lower_wick = max(max_lower_wick, 0.5)
+        rsi_min = min(rsi_min, 25)
+        rsi_max = max(rsi_max, 55)
+
+    last = _pick_last_segment(df, use_last_candle)
+
     for i in range(3):
         o, c, h, l = (last['open'].iloc[i], last['close'].iloc[i],
                       last['high'].iloc[i], last['low'].iloc[i])
@@ -83,6 +110,7 @@ def detect_three_black_crows(df: pd.DataFrame,
         lw = (min(o, c) - l) / max(h - l, 1e-12)
         if lw > max_lower_wick:
             return None
+
     if not (last['close'].iloc[1] < last['close'].iloc[0] and last['close'].iloc[2] < last['close'].iloc[1]):
         return None
 
@@ -96,12 +124,12 @@ def detect_three_black_crows(df: pd.DataFrame,
         return None
 
     macd_line, signal_line, hist = macd(df['close'])
-    if use_macd and not (hist.iloc[-1] < 0):
+    if use_macd and not (hist.iloc[-1] < macd_tol):
         return None
 
     if use_vol and 'volume' in df.columns:
         v = df['volume'].iloc[-20:]
-        if v.mean() <= 0 or v.iloc[-1] < 0.75 * v.mean():
+        if v.mean() <= 0 or v.iloc[-1] < vol_min_ratio * v.mean():
             return None
 
     atr14 = atr(df, 14).iloc[-1]

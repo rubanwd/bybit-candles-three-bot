@@ -22,9 +22,10 @@ def load_cfg():
         "MARKET_CATEGORY": os.getenv("MARKET_CATEGORY", "linear"),
         "QUOTE": os.getenv("QUOTE", "USDT"),
         "UNIVERSE_MODE": os.getenv("UNIVERSE_MODE", "TURNOVER"),
-        "TOP_N": int(os.getenv("TOP_N", "100")),
+        "TOP_N": int(os.getenv("TOP_N", "120")),
         "VOL_LOOKBACK": int(os.getenv("VOL_LOOKBACK", "96")),
         "TIMEFRAME": os.getenv("TIMEFRAME", "60"),
+        "SCAN_TF_LIST": os.getenv("SCAN_TF_LIST", "30,60,240"),
         "CANDLES_LIMIT": int(os.getenv("CANDLES_LIMIT", "300")),
         "USE_EMA": os.getenv("USE_EMA", "1") == "1",
         "USE_RSI": os.getenv("USE_RSI", "1") == "1",
@@ -40,13 +41,17 @@ def load_cfg():
         "ATR_LEN": int(os.getenv("ATR_LEN", "14")),
         "SL_ATR_MULT": float(os.getenv("SL_ATR_MULT", "1.8")),
         "TP_ATR_MULT": float(os.getenv("TP_ATR_MULT", "3.6")),
+        "MACD_TOL": float(os.getenv("MACD_TOL", "0.0008")),
+        "VOL_MIN_RATIO": float(os.getenv("VOL_MIN_RATIO", "0.6")),
+        "RELAX_MODE": os.getenv("RELAX_MODE", "1") == "1",
+        "USE_LAST_CANDLE": os.getenv("USE_LAST_CANDLE", "1") == "1",
         "TG_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN", ""),
         "TG_CHAT": os.getenv("TELEGRAM_CHAT_ID", ""),
         "TG_SIGNAL_CHAT": os.getenv("TELEGRAM_SIGNAL_CHAT_ID", ""),
-        "RUN_MODE": os.getenv("RUN_MODE", "ONCE").upper(),
+        "RUN_MODE": os.getenv("RUN_MODE", "LOOP").upper(),
         "INTERVAL_SECONDS": int(os.getenv("INTERVAL_SECONDS", "600")),
         "SEND_STARTUP_TEST": os.getenv("SEND_STARTUP_TEST", "1") == "1",
-        "AUTO_TRADE": os.getenv("AUTO_TRADE", "0") == "1",
+        "AUTO_TRADE": os.getenv("AUTO_TRADE", "1") == "1",
         "POSITION_USD": float(os.getenv("POSITION_USD", "100")),
         "LEVERAGE": int(os.getenv("LEVERAGE", "10")),
         "POSITION_MODE": os.getenv("POSITION_MODE", "one_way"),
@@ -59,8 +64,8 @@ def load_cfg():
     return cfg
 
 def format_signal_text(symbol: str, side: str, info: dict) -> str:
-    line1 = f"<b>{symbol}</b> — <b>{'LONG' if side=='LONG' else 'SHORT'}</b>"
-    line2 = f"Entry({('close' if True else 'retest')}): <b>{fmt_price(info['entry_close'])}</b>; Retest: <b>{fmt_price(info['entry_retest'])}</b>"
+    line1 = f"<b>{symbol}</b> — <b>{'LONG' if side=='LONG' else 'SHORT'}</b> [{info.get('timeframe','?')}m]"
+    line2 = f"Entry(close): <b>{fmt_price(info['entry_close'])}</b>; Retest: <b>{fmt_price(info['entry_retest'])}</b>"
     line3 = f"SL: <b>{fmt_price(info['sl'])}</b> | TP: <b>{fmt_price(info['tp'])}</b> | {risk_summary(side, info['entry_close'], info['sl'], info['tp'])}"
     line4 = f"EMA50: {fmt_price(info['ema50'])} | EMA200: {fmt_price(info['ema200'])} | RSI: {info['rsi']:.1f} | MACD hist: {info['macd_hist']:.4f} | ATR: {fmt_price(info['atr'])}"
     return "\n".join([line1, line2, line3, line4])
@@ -68,8 +73,8 @@ def format_signal_text(symbol: str, side: str, info: dict) -> str:
 def pick_entry_price(info: dict, mode: str) -> float:
     return float(info["entry_retest"] if mode == "retest" else info["entry_close"])
 
-def process_symbol(api: BybitAPI, cfg, sym: str):
-    df = get_ohlcv(api, sym, cfg["MARKET_CATEGORY"], cfg["TIMEFRAME"], cfg["CANDLES_LIMIT"])
+def process_symbol(api: BybitAPI, cfg, sym: str, tf: str):
+    df = get_ohlcv(api, sym, cfg["MARKET_CATEGORY"], tf, cfg["CANDLES_LIMIT"])
     if df.empty or len(df) < 60:
         return None
 
@@ -77,18 +82,24 @@ def process_symbol(api: BybitAPI, cfg, sym: str):
         df,
         use_ema=cfg["USE_EMA"], use_rsi=cfg["USE_RSI"], use_macd=cfg["USE_MACD"], use_vol=cfg["USE_VOLUME"],
         min_body_ratio=cfg["MIN_BODY_RATIO"], max_upper_wick=cfg["MAX_UPPER_WICK"],
-        rsi_min=cfg["RSI_MIN_LONG"], rsi_max=cfg["RSI_MAX_LONG"]
+        rsi_min=cfg["RSI_MIN_LONG"], rsi_max=cfg["RSI_MAX_LONG"],
+        macd_tol=cfg["MACD_TOL"], vol_min_ratio=cfg["VOL_MIN_RATIO"],
+        relax_mode=cfg["RELAX_MODE"], use_last_candle=cfg["USE_LAST_CANDLE"]
     )
     if long_info:
+        long_info["timeframe"] = tf
         return ("LONG", sym, long_info)
 
     short_info = detect_three_black_crows(
         df,
         use_ema=cfg["USE_EMA"], use_rsi=cfg["USE_RSI"], use_macd=cfg["USE_MACD"], use_vol=cfg["USE_VOLUME"],
         min_body_ratio=cfg["MIN_BODY_RATIO"], max_lower_wick=cfg["MAX_LOWER_WICK"],
-        rsi_min=cfg["RSI_MIN_SHORT"], rsi_max=cfg["RSI_MAX_SHORT"]
+        rsi_min=cfg["RSI_MIN_SHORT"], rsi_max=cfg["RSI_MAX_SHORT"],
+        macd_tol=cfg["MACD_TOL"], vol_min_ratio=cfg["VOL_MIN_RATIO"],
+        relax_mode=cfg["RELAX_MODE"], use_last_candle=cfg["USE_LAST_CANDLE"]
     )
     if short_info:
+        short_info["timeframe"] = tf
         return ("SHORT", sym, short_info)
 
     return None
@@ -107,19 +118,22 @@ def run_once(cfg) -> int:
     logging.info(f"Universe: {len(symbols)} symbols (mode={cfg['UNIVERSE_MODE']})")
     found = []
 
+    tf_list = [t.strip() for t in str(cfg["SCAN_TF_LIST"]).split(",") if t.strip()]
+
     for sym in symbols:
-        sig = process_symbol(api, cfg, sym)
+        cancel_stale_orders(api, cfg["MARKET_CATEGORY"], sym, cfg["ORDER_TTL_MINUTES"])
+
+        sig = None
+        for tf in tf_list:
+            sig = process_symbol(api, cfg, sym, tf)
+            if sig: break
         if not sig:
-            # также чистим старые лимитки по символу, чтобы не застаивались
-            cancel_stale_orders(api, cfg["MARKET_CATEGORY"], sym, cfg["ORDER_TTL_MINUTES"])
             continue
+
         side, symbol, info = sig
-        found.append(sig)
+        tf = info.get("timeframe", cfg["TIMEFRAME"])
+        tg.send(f"⚡️ {symbol} {side} [{tf}m]\nEntry: {fmt_price(pick_entry_price(info, cfg['ENTRY_MODE']))} | SL {fmt_price(info['sl'])} | TP {fmt_price(info['tp'])}", to_signal=True)
 
-        # быстрый сигнал
-        tg.send(f"⚡️ {symbol} {side}\nEntry: {fmt_price(pick_entry_price(info, cfg['ENTRY_MODE']))} | SL {fmt_price(info['sl'])} | TP {fmt_price(info['tp'])}", to_signal=True)
-
-        # ордера, если включено
         if cfg["AUTO_TRADE"] and can_open_for_symbol(api, cfg["MARKET_CATEGORY"], symbol, cfg["MAX_OPEN_PER_SYMBOL"]):
             entry_price = pick_entry_price(info, cfg["ENTRY_MODE"])
             order_id, qty = place_signal_order(
@@ -128,19 +142,19 @@ def run_once(cfg) -> int:
             )
             if order_id:
                 tg.send(f"🧾 Placed {side} {symbol} qty≈{qty} @ {fmt_price(entry_price)} (orderId={order_id})")
-                # сразу SL/TP — для one_way позиция появится после частичного/полного исполнения,
-                # но Bybit позволяет задать trading-stop.
                 attach_sltp(api, cfg["MARKET_CATEGORY"], symbol, sl=info["sl"], tp=info["tp"], reduce_only=cfg["REDUCE_ONLY_SLTP"])
+
+        found.append(sig)
 
     if not found:
         tg.send("🫥 Нет сигналов по паттернам на текущем скане.")
         return 0
 
-    # подробный отчёт
     blocks = []
     for side, sym, info in found:
+        tf = info.get("timeframe", cfg["TIMEFRAME"])
         blocks.append(
-            f"{sym} <b>{side}</b>\n"
+            f"{sym} <b>{side}</b> [{tf}m]\n"
             f"Entry(close): <b>{fmt_price(info['entry_close'])}</b>; Retest: <b>{fmt_price(info['entry_retest'])}</b>\n"
             f"SL <b>{fmt_price(info['sl'])}</b> | TP <b>{fmt_price(info['tp'])}</b>\n"
             f"EMA50 {fmt_price(info['ema50'])} | EMA200 {fmt_price(info['ema200'])} | RSI {info['rsi']:.1f} | MACD {info['macd_hist']:.4f} | ATR {fmt_price(info['atr'])}"

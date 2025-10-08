@@ -3,7 +3,7 @@ import hmac
 import hashlib
 import requests
 from urllib.parse import urlencode
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 class BybitAPI:
     def __init__(self, base_url: str, api_key: str = "", api_secret: str = ""):
@@ -22,28 +22,17 @@ class BybitAPI:
         params = {"category": category, "symbol": symbol, "interval": interval, "limit": limit}
         return self._get("/v5/market/kline", params)
 
-    # ---------------- PRIVATE (TRADE) ----------------
-    def get_position_mode(self, category="linear") -> Dict[str, Any]:
-        return self._get("/v5/position/switch-mode", {"category": category}, auth=True)
-
+    # ---------------- PRIVATE ----------------
     def set_position_mode(self, category="linear", mode="one_way") -> Dict[str, Any]:
-        # mode: 0(one-way) / 1(hedge). Use path: /v5/position/switch-mode with POST per v5
         m = 0 if mode == "one_way" else 1
         payload = {"category": category, "mode": m}
         return self._post("/v5/position/switch-mode", payload, auth=True)
 
     def set_leverage(self, category="linear", symbol="BTCUSDT", buy_leverage=10, sell_leverage=10) -> Dict[str, Any]:
-        payload = {
-            "category": category,
-            "symbol": symbol,
-            "buyLeverage": str(buy_leverage),
-            "sellLeverage": str(sell_leverage),
-        }
+        payload = {"category": category, "symbol": symbol, "buyLeverage": str(buy_leverage), "sellLeverage": str(sell_leverage)}
         return self._post("/v5/position/set-leverage", payload, auth=True)
 
     def place_order(self, **kwargs) -> Dict[str, Any]:
-        # Expected keys example:
-        # category, symbol, side, orderType, qty, price(optional for Limit), timeInForce (GTC/IOC/FOK/PO)
         return self._post("/v5/order/create", kwargs, auth=True)
 
     def cancel_order(self, category="linear", symbol="", orderId: Optional[str]=None, orderLinkId: Optional[str]=None):
@@ -65,11 +54,7 @@ class BybitAPI:
     def set_sl_tp(self, category="linear", symbol="", positionIdx: int=0,
                   takeProfit: Optional[str]=None, stopLoss: Optional[str]=None,
                   tpTriggerBy="LastPrice", slTriggerBy="LastPrice", reduceOnly=True):
-        payload = {
-            "category": category,
-            "symbol": symbol,
-            "positionIdx": str(positionIdx),
-        }
+        payload = {"category": category, "symbol": symbol, "positionIdx": str(positionIdx)}
         if takeProfit is not None: payload["takeProfit"] = str(takeProfit)
         if stopLoss is not None: payload["stopLoss"] = str(stopLoss)
         payload["tpTriggerBy"] = tpTriggerBy
@@ -78,9 +63,8 @@ class BybitAPI:
         return self._post("/v5/position/trading-stop", payload, auth=True)
 
     # ---------------- low-level ----------------
-    def _get(self, path: str, params: Optional[Dict[str, Any]] = None, auth: bool = False) -> Dict[str, Any]:
+    def _get(self, path: str, params: Dict[str, Any], auth: bool = False) -> Dict[str, Any]:
         url = self.base + path
-        params = params or {}
         headers = self._auth_headers(params) if auth else None
         r = requests.get(url, params=params, headers=headers, timeout=30)
         r.raise_for_status()
@@ -95,11 +79,8 @@ class BybitAPI:
 
     def _auth_headers(self, payload: Dict[str, Any]) -> Dict[str, str]:
         ts = str(int(time.time() * 1000))
-        body = payload if payload else {}
-        # Per Bybit v5 JSON-signing: sign ts + apiKey + recvWindow + bodyString(where needed)
-        # For simplicity, we sign empty query and JSON body serialized as key-sorted urlencoded.
-        body_str = urlencode(sorted(body.items())) if body else ""
         recv_window = "5000"
+        body_str = urlencode(sorted(payload.items())) if payload else ""
         to_sign = ts + self.key + recv_window + body_str
         sign = hmac.new(self.secret.encode(), to_sign.encode(), hashlib.sha256).hexdigest()
         return {
