@@ -1,5 +1,5 @@
 def fmt_price(x: float) -> str:
-    return f"{x:.1f}"
+    return f"{x:.3f}"
 
 def risk_summary(side: str, entry: float, sl: float, tp: float) -> str:
     if side == "LONG":

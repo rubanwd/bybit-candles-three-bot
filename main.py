@@ -63,12 +63,27 @@ def load_cfg():
     }
     return cfg
 
+def _pretty_tf(tf_minutes: str) -> str:
+    try:
+        n = int(tf_minutes)
+        return f"{n//60}H" if n % 60 == 0 else f"{n}m"
+    except Exception:
+        return f"{tf_minutes}m"
+
 def format_signal_text(symbol: str, side: str, info: dict) -> str:
-    line1 = f"<b>{symbol}</b> — <b>{'LONG' if side=='LONG' else 'SHORT'}</b> [{info.get('timeframe','?')}m]"
-    line2 = f"Entry(close): <b>{fmt_price(info['entry_close'])}</b>; Retest: <b>{fmt_price(info['entry_retest'])}</b>"
-    line3 = f"SL: <b>{fmt_price(info['sl'])}</b> | TP: <b>{fmt_price(info['tp'])}</b> | {risk_summary(side, info['entry_close'], info['sl'], info['tp'])}"
-    line4 = f"EMA50: {fmt_price(info['ema50'])} | EMA200: {fmt_price(info['ema200'])} | RSI: {info['rsi']:.1f} | MACD hist: {info['macd_hist']:.4f} | ATR: {fmt_price(info['atr'])}"
-    return "\n".join([line1, line2, line3, line4])
+    tf = _pretty_tf(info.get("timeframe", "?"))
+    arrow = "📈" if side == "LONG" else "📉"
+    badge = "🟩 LONG" if side == "LONG" else "🟥 SHORT"
+    entry = info["entry_close"]; sl = info["sl"]; tp = info["tp"]
+    rr = ((tp - entry) / max(entry - sl, 1e-12)) if side == "LONG" else ((entry - tp) / max(sl - entry, 1e-12))
+    lines = [
+        f"{arrow} <b>{symbol}</b> {badge} [{tf}]",
+        f"💰 Entry: {fmt_price(info['entry_close'])}  →  Retest: {fmt_price(info['entry_retest'])}",
+        f"🧱 SL: {fmt_price(sl)}   |   🎯 TP: {fmt_price(tp)}   |   R:R ≈ {rr:.2f}",
+        f"📊 EMA50: {fmt_price(info['ema50'])}  |  EMA200: {fmt_price(info['ema200'])}",
+        f"⚙️ RSI: {info['rsi']:.1f}  |  MACD: {info['macd_hist']:.4f}  |  ATR: {fmt_price(info['atr'])}",
+    ]
+    return "\n".join(lines)
 
 def pick_entry_price(info: dict, mode: str) -> float:
     return float(info["entry_retest"] if mode == "retest" else info["entry_close"])
@@ -132,7 +147,10 @@ def run_once(cfg) -> int:
 
         side, symbol, info = sig
         tf = info.get("timeframe", cfg["TIMEFRAME"])
-        tg.send(f"⚡️ {symbol} {side} [{tf}m]\nEntry: {fmt_price(pick_entry_price(info, cfg['ENTRY_MODE']))} | SL {fmt_price(info['sl'])} | TP {fmt_price(info['tp'])}", to_signal=True)
+        # fast signal header
+        tg.send(f"⚡️ {symbol} {side} [{_pretty_tf(tf)}]"
+                f"\nEntry: {fmt_price(pick_entry_price(info, cfg['ENTRY_MODE']))} | SL {fmt_price(info['sl'])} | TP {fmt_price(info['tp'])}",
+                to_signal=True)
 
         if cfg["AUTO_TRADE"] and can_open_for_symbol(api, cfg["MARKET_CATEGORY"], symbol, cfg["MAX_OPEN_PER_SYMBOL"]):
             entry_price = pick_entry_price(info, cfg["ENTRY_MODE"])
@@ -150,17 +168,11 @@ def run_once(cfg) -> int:
         tg.send("🫥 Нет сигналов по паттернам на текущем скане.")
         return 0
 
-    blocks = []
+    # detailed report
+    cards = []
     for side, sym, info in found:
-        tf = info.get("timeframe", cfg["TIMEFRAME"])
-        blocks.append(
-            f"{sym} <b>{side}</b> [{tf}m]\n"
-            f"Entry(close): <b>{fmt_price(info['entry_close'])}</b>; Retest: <b>{fmt_price(info['entry_retest'])}</b>\n"
-            f"SL <b>{fmt_price(info['sl'])}</b> | TP <b>{fmt_price(info['tp'])}</b>\n"
-            f"EMA50 {fmt_price(info['ema50'])} | EMA200 {fmt_price(info['ema200'])} | RSI {info['rsi']:.1f} | MACD {info['macd_hist']:.4f} | ATR {fmt_price(info['atr'])}"
-        )
-    report = "📊 <b>Signals found:</b>\n\n" + "\n\n".join(blocks)
-    tg.send(report)
+        cards.append(format_signal_text(sym, side, info))
+    tg.send("📊 <b>Signals found</b>:\n\n" + "\n\n".join(cards))
     return len(found)
 
 def main():
