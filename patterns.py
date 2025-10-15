@@ -19,7 +19,7 @@ def detect_three_white_soldiers(df: pd.DataFrame,
                                 macd_tol: float = 0.0008,
                                 vol_min_ratio: float = 0.6,
                                 relax_mode: bool = True,
-                                use_last_candle: bool = True) -> Optional[Dict[str, Any]]:
+                                use_last_candle: bool = True):
     if len(df) < 60:
         return None
     if relax_mode:
@@ -89,7 +89,7 @@ def detect_three_black_crows(df: pd.DataFrame,
                              macd_tol: float = 0.0008,
                              vol_min_ratio: float = 0.6,
                              relax_mode: bool = True,
-                             use_last_candle: bool = True) -> Optional[Dict[str, Any]]:
+                             use_last_candle: bool = True):
     if len(df) < 60:
         return None
     if relax_mode:

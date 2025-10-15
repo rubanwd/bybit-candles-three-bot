@@ -1,4 +1,3 @@
-
 from typing import List
 import pandas as pd
 import numpy as np
@@ -19,7 +18,6 @@ def get_universe(api: BybitAPI, category: str, quote: str, top_n: int, mode: str
         df = df.sort_values("turnover24h", ascending=False).head(top_n)
         return df["symbol"].tolist()
 
-    # VOLATILITY mode
     candidates = df.sort_values("turnover24h", ascending=False).head(int(top_n*1.5))["symbol"].tolist()
     vol_rows = []
     for sym in candidates:
@@ -36,12 +34,14 @@ def get_universe(api: BybitAPI, category: str, quote: str, top_n: int, mode: str
     vol_rows.sort(key=lambda x: x[1], reverse=True)
     return [s for s,_ in vol_rows[:top_n]]
 
-def get_ohlcv(api: BybitAPI, symbol: str, category: str, interval: str, limit: int) -> pd.DataFrame:
+def get_ohlcv(api: BybitAPI, symbol: str, category: str, interval: str, limit: int):
     resp = api.get_kline(category=category, symbol=symbol, interval=interval, limit=limit)
     lst = (resp.get("result", {}) or {}).get("list", []) or []
     if not lst:
+        import pandas as pd
         return pd.DataFrame()
     cols = ["start","open","high","low","close","volume","turnover"]
+    import pandas as pd
     df = pd.DataFrame(lst, columns=cols)
     for c in ["open","high","low","close","volume","turnover"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")

@@ -3,6 +3,8 @@ import time
 import logging
 from dotenv import load_dotenv
 from tenacity import retry, wait_fixed, stop_after_attempt
+from datetime import datetime, timezone
+import csv
 
 from bybit_api import BybitAPI
 from data_fetch import get_universe, get_ohlcv
@@ -10,6 +12,7 @@ from patterns import detect_three_white_soldiers, detect_three_black_crows
 from telegram_utils import TelegramClient
 from utils import fmt_price, risk_summary
 from trader import can_open_for_symbol, place_signal_order, attach_sltp, cancel_stale_orders
+from db import insert_signals
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
@@ -60,6 +63,8 @@ def load_cfg():
         "ENTRY_MODE": os.getenv("ENTRY_MODE", "close"),
         "ORDER_TYPE": os.getenv("ORDER_TYPE", "Limit"),
         "REDUCE_ONLY_SLTP": os.getenv("REDUCE_ONLY_SLTP", "1") == "1",
+        "DB_PATH": os.getenv("DB_PATH", "./signals.db"),
+        "LOG_DIR": os.getenv("LOG_DIR", "./logs"),
     }
     return cfg
 
@@ -119,8 +124,24 @@ def process_symbol(api: BybitAPI, cfg, sym: str, tf: str):
 
     return None
 
+def _csv_log_signals(log_dir: str, run_id: str, rows):
+    if not rows:
+        return
+    os.makedirs(log_dir, exist_ok=True)
+    day = datetime.now(timezone.utc).strftime("%Y%m%d")
+    path = os.path.join(log_dir, f"signals_{day}.csv")
+    file_exists = os.path.isfile(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if not file_exists:
+            w.writerow(["run_id","symbol","side","timeframe","entry_close","entry_retest","sl","tp","ema50","ema200","rsi","macd_hist","atr","rr","created_at_utc"])
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
+        for r in rows:
+            w.writerow([run_id,r["symbol"],r["side"],r.get("timeframe",""),r["entry_close"],r["entry_retest"],r["sl"],r["tp"],r["ema50"],r["ema200"],r["rsi"],r["macd_hist"],r["atr"],r["rr"],now])
+
 @retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
 def run_once(cfg) -> int:
+    run_id = str(int(datetime.now(timezone.utc).timestamp()))
     api = BybitAPI(cfg["BYBIT_BASE"], cfg["BYBIT_API_KEY"], cfg["BYBIT_API_SECRET"])
     tg = TelegramClient(cfg["TG_TOKEN"], cfg["TG_CHAT"], cfg["TG_SIGNAL_CHAT"])
     if cfg["SEND_STARTUP_TEST"]:
@@ -147,7 +168,6 @@ def run_once(cfg) -> int:
 
         side, symbol, info = sig
         tf = info.get("timeframe", cfg["TIMEFRAME"])
-        # fast signal header
         tg.send(f"⚡️ {symbol} {side} [{_pretty_tf(tf)}]"
                 f"\nEntry: {fmt_price(pick_entry_price(info, cfg['ENTRY_MODE']))} | SL {fmt_price(info['sl'])} | TP {fmt_price(info['tp'])}",
                 to_signal=True)
@@ -168,10 +188,30 @@ def run_once(cfg) -> int:
         tg.send("🫥 Нет сигналов по паттернам на текущем скане.")
         return 0
 
-    # detailed report
     cards = []
+    rows_for_db = []
     for side, sym, info in found:
+        entry = info["entry_close"]; sl = info["sl"]; tp = info["tp"]
+        rr = ((tp - entry) / max(entry - sl, 1e-12)) if side == "LONG" else ((entry - tp) / max(sl - entry, 1e-12))
+        info["timeframe"] = info.get("timeframe", cfg["TIMEFRAME"])
+        rows_for_db.append({
+            "symbol": sym, "side": side, "timeframe": info["timeframe"],
+            "entry_close": float(entry), "entry_retest": float(info["entry_retest"]),
+            "sl": float(sl), "tp": float(tp),
+            "ema50": float(info["ema50"]), "ema200": float(info["ema200"]),
+            "rsi": float(info["rsi"]), "macd_hist": float(info["macd_hist"]),
+            "atr": float(info["atr"]), "rr": float(rr)
+        })
         cards.append(format_signal_text(sym, side, info))
+
+    _csv_log_signals(cfg["LOG_DIR"], run_id, rows_for_db)
+
+    try:
+        inserted = insert_signals(cfg["DB_PATH"], run_id, rows_for_db)
+        logging.info(f"DB insert: {inserted} rows")
+    except Exception as e:
+        logging.exception(f"DB insert failed: {e}")
+
     tg.send("📊 <b>Signals found</b>:\n\n" + "\n\n".join(cards))
     return len(found)
 

@@ -4,3 +4,5 @@ pandas==2.2.2
 numpy==1.26.4
 tenacity==8.5.0
 pytz==2024.1
+SQLAlchemy==2.0.32
+PyMySQL==1.1.1

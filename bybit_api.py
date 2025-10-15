@@ -11,7 +11,6 @@ class BybitAPI:
         self.key = api_key or ""
         self.secret = api_secret or ""
 
-    # ---------------- PUBLIC ----------------
     def get_tickers(self, category="linear", symbol: Optional[str] = None) -> Dict[str, Any]:
         params = {"category": category}
         if symbol:
@@ -22,7 +21,6 @@ class BybitAPI:
         params = {"category": category, "symbol": symbol, "interval": interval, "limit": limit}
         return self._get("/v5/market/kline", params)
 
-    # ---------------- PRIVATE ----------------
     def set_position_mode(self, category="linear", mode="one_way") -> Dict[str, Any]:
         m = 0 if mode == "one_way" else 1
         payload = {"category": category, "mode": m}
@@ -62,7 +60,6 @@ class BybitAPI:
         payload["reduceOnly"] = "true" if reduceOnly else "false"
         return self._post("/v5/position/trading-stop", payload, auth=True)
 
-    # ---------------- low-level ----------------
     def _get(self, path: str, params: Dict[str, Any], auth: bool = False) -> Dict[str, Any]:
         url = self.base + path
         headers = self._auth_headers(params) if auth else None

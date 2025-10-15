@@ -22,7 +22,6 @@ def place_signal_order(api: BybitAPI, category: str, symbol: str, side: str, ent
                        time_in_force: str = "GTC") -> Tuple[Optional[str], float]:
     qty = round(max(position_usd / max(entry_price, 1e-9), 0.0001), 8)
     api.set_leverage(category=category, symbol=symbol, buy_leverage=leverage, sell_leverage=leverage)
-    link_id = _link_id("ENT")
     payload = {
         "category": category,
         "symbol": symbol,
@@ -30,7 +29,7 @@ def place_signal_order(api: BybitAPI, category: str, symbol: str, side: str, ent
         "orderType": order_type,
         "qty": str(qty),
         "timeInForce": time_in_force,
-        "orderLinkId": link_id,
+        "orderLinkId": _link_id("ENT"),
     }
     if order_type == "Limit":
         payload["price"] = str(entry_price)
