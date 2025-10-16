@@ -1,7 +1,8 @@
 
 import os
 from typing import List, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import pytz
 
 # --- SQLAlchemy (optional) ---
 _USE_SA = bool(os.getenv("DATABASE_URL"))
@@ -76,13 +77,27 @@ def open_db(db_path: str) -> sqlite3.Connection:
     conn.executescript(SCHEMA_SQL)
     return conn
 
+def _kyiv_now_dt() -> datetime:
+    tz = pytz.timezone("Europe/Kyiv")
+    return datetime.now(tz)
+
+def _parse_iso_any_tz(s: str) -> datetime:
+    # Supports legacy 'Z' UTC entries and offset-aware ISO strings
+    try:
+        if s.endswith("Z"):
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return datetime.fromisoformat(s)
+    except Exception:
+        # Fallback: treat as naive UTC
+        return datetime.fromtimestamp(0, tz=pytz.UTC)
+
 def _insert_sqlite(db_path: str, run_id: str, rows: List[Dict[str, Any]]) -> int:
     if not rows:
         return 0
     conn = open_db(db_path)
     try:
         cur = conn.cursor()
-        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
+        now_iso = _kyiv_now_dt().isoformat(timespec="seconds")
         payload = []
         for r in rows:
             payload.append((
@@ -119,7 +134,7 @@ def _insert_sa(run_id: str, rows: List[Dict[str, Any]]) -> int:
     if _ENGINE is None:
         _sa_setup()
     from sqlalchemy import insert
-    now_dt = datetime.now(timezone.utc)
+    now_dt = _kyiv_now_dt()
     payload = []
     for r in rows:
         payload.append({
@@ -150,3 +165,37 @@ def insert_signals(db_path: str, run_id: str, rows: List[Dict[str, Any]]) -> int
         return _insert_sa(run_id, rows)
     else:
         return _insert_sqlite(db_path, run_id, rows)
+
+def has_recent_signal(db_path: str, symbol: str, within_hours: int = 24) -> bool:
+    """Return True if there is any signal for symbol within the last `within_hours` hours (Kyiv time).
+    Works with SQLite or SQLAlchemy depending on DATABASE_URL.
+    """
+    lookback_dt = _kyiv_now_dt() - timedelta(hours=within_hours)
+    if os.getenv("DATABASE_URL"):
+        if _ENGINE is None:
+            _sa_setup()
+        from sqlalchemy import select
+        with _ENGINE.begin() as conn:
+            stmt = select(_TABLE.c.id).where(
+                (_TABLE.c.symbol == symbol) & (_TABLE.c.created_at >= lookback_dt)
+            ).limit(1)
+            row = conn.execute(stmt).first()
+            return row is not None
+    else:
+        conn = open_db(db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT created_at FROM signals WHERE symbol=? ORDER BY id DESC LIMIT 1", (symbol,))
+            row = cur.fetchone()
+            if not row:
+                return False
+            created_at_str = row[0]
+            created_dt = _parse_iso_any_tz(created_at_str)
+            # Normalize to Kyiv for comparison
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone("Europe/Kyiv"))
+            else:
+                created_dt = created_dt.astimezone(pytz.timezone("Europe/Kyiv"))
+            return created_dt >= lookback_dt
+        finally:
+            conn.close()

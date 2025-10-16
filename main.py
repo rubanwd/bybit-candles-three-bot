@@ -4,6 +4,7 @@ import logging
 from dotenv import load_dotenv
 from tenacity import retry, wait_fixed, stop_after_attempt
 from datetime import datetime, timezone
+import pytz
 import csv
 
 from bybit_api import BybitAPI
@@ -12,7 +13,7 @@ from patterns import detect_three_white_soldiers, detect_three_black_crows
 from telegram_utils import TelegramClient
 from utils import fmt_price, risk_summary
 from trader import can_open_for_symbol, place_signal_order, attach_sltp, cancel_stale_orders
-from db import insert_signals
+from db import insert_signals, has_recent_signal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
@@ -128,14 +129,15 @@ def _csv_log_signals(log_dir: str, run_id: str, rows):
     if not rows:
         return
     os.makedirs(log_dir, exist_ok=True)
-    day = datetime.now(timezone.utc).strftime("%Y%m%d")
+    kyiv = pytz.timezone("Europe/Kyiv")
+    day = datetime.now(kyiv).strftime("%Y%m%d")
     path = os.path.join(log_dir, f"signals_{day}.csv")
     file_exists = os.path.isfile(path)
     with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if not file_exists:
-            w.writerow(["run_id","symbol","side","timeframe","entry_close","entry_retest","sl","tp","ema50","ema200","rsi","macd_hist","atr","rr","created_at_utc"])
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
+            w.writerow(["run_id","symbol","side","timeframe","entry_close","entry_retest","sl","tp","ema50","ema200","rsi","macd_hist","atr","rr","created_at_kyiv"])
+        now = datetime.now(kyiv).isoformat(timespec="seconds")
         for r in rows:
             w.writerow([run_id,r["symbol"],r["side"],r.get("timeframe",""),r["entry_close"],r["entry_retest"],r["sl"],r["tp"],r["ema50"],r["ema200"],r["rsi"],r["macd_hist"],r["atr"],r["rr"],now])
 
@@ -167,6 +169,10 @@ def run_once(cfg) -> int:
             continue
 
         side, symbol, info = sig
+        # Skip if there was already a signal for this symbol within last 24h (Kyiv time)
+        if has_recent_signal(cfg["DB_PATH"], symbol, within_hours=24):
+            logging.info(f"Skip {symbol}: recent signal within 24h")
+            continue
         tf = info.get("timeframe", cfg["TIMEFRAME"])
         tg.send(f"⚡️ {symbol} {side} [{_pretty_tf(tf)}]"
                 f"\nEntry: {fmt_price(pick_entry_price(info, cfg['ENTRY_MODE']))} | SL {fmt_price(info['sl'])} | TP {fmt_price(info['tp'])}",
